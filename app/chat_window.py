@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QLineEdit,
     QListWidget,
@@ -28,7 +29,7 @@ class ChatWindow(QWidget):
     送信後は自分のメッセージをリストに追加し、簡単なエコー応答を表示します（デモ目的）。
     """
 
-    def __init__(self, parent=None, server_url: str | None = None):
+    def __init__(self, parent=None, server_url=None):
         super().__init__(parent)
         self.setWindowTitle("PyChat - チャット")
         self.resize(600, 420)
@@ -37,7 +38,13 @@ class ChatWindow(QWidget):
         db_path = Path(__file__).resolve().parents[1] / "chat_history.db"
         self.storage = Storage(db_path)
 
+        # ステータス表示（接続状態 / 接続先）
+        self.status_label = QLabel()
+        self.status_label.setText("Not connected")
+        self.status_label.setStyleSheet("color: gray; padding:4px;")
+
         main_layout = QVBoxLayout(self)
+        main_layout.addWidget(self.status_label)
 
         # メッセージ表示エリア
         self.chat_view = QListWidget()
@@ -61,7 +68,7 @@ class ChatWindow(QWidget):
         self.input.returnPressed.connect(self.send_message)
         self.attach_btn.clicked.connect(self.attach_file)
 
-        # 起動時に履歴をロード
+    # 起動時に履歴をロード
         try:
             for msg in self.storage.get_messages():
                 who = msg.get("sender", "?")
@@ -81,13 +88,20 @@ class ChatWindow(QWidget):
             pass
 
         # WebSocket クライアント
-        self.ws_client: WSClient | None = None
+        self.ws_client = None
+        self.server_url = server_url
         if server_url:
             try:
                 self.ws_client = WSClient()
                 self.ws_client.message_received.connect(self._on_ws_message)
+                # 接続状態シグナルをハンドル
+                self.ws_client.connected.connect(self._on_ws_connected)
+                self.ws_client.disconnected.connect(self._on_ws_disconnected)
                 # start in background thread
                 self.ws_client.start(server_url)
+                # 初期ステータス表示
+                self.status_label.setText(f"Connecting to {server_url}...")
+                self.status_label.setStyleSheet("color: orange; padding:4px;")
             except Exception:
                 self.ws_client = None
 
@@ -189,6 +203,23 @@ class ChatWindow(QWidget):
             self.chat_view.addItem(item)
             self.chat_view.setItemWidget(item, widget)
             self.chat_view.scrollToBottom()
+        except Exception:
+            pass
+
+    def _on_ws_connected(self):
+        try:
+            if self.server_url:
+                self.status_label.setText(f"Connected: {self.server_url}")
+            else:
+                self.status_label.setText("Connected")
+            self.status_label.setStyleSheet("color: green; padding:4px;")
+        except Exception:
+            pass
+
+    def _on_ws_disconnected(self):
+        try:
+            self.status_label.setText("Disconnected")
+            self.status_label.setStyleSheet("color: red; padding:4px;")
         except Exception:
             pass
 
