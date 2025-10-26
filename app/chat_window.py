@@ -15,6 +15,7 @@ import shutil
 
 from .storage import Storage
 from .ui_enhancements import MessageBubble
+from .ws_client import WSClient
 
 
 class ChatWindow(QWidget):
@@ -27,7 +28,7 @@ class ChatWindow(QWidget):
     送信後は自分のメッセージをリストに追加し、簡単なエコー応答を表示します（デモ目的）。
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, server_url: str | None = None):
         super().__init__(parent)
         self.setWindowTitle("PyChat - チャット")
         self.resize(600, 420)
@@ -79,6 +80,18 @@ class ChatWindow(QWidget):
             # 履歴ロード失敗は無視
             pass
 
+        # WebSocket クライアント
+        self.ws_client: WSClient | None = None
+        if server_url:
+            try:
+                self.ws_client = WSClient()
+                self.ws_client.message_received.connect(self._on_ws_message)
+                # start in background thread
+                self.ws_client.start(server_url)
+            except Exception:
+                self.ws_client = None
+
+
     def send_message(self):
         text = self.input.text().strip()
         if not text:
@@ -97,7 +110,13 @@ class ChatWindow(QWidget):
         self.chat_view.setItemWidget(item, widget)
         self.input.clear()
 
-        # 自動エコーは不要のためここでは何もしない
+        # サーバへ送信（接続されていれば）
+        try:
+            if self.ws_client is not None:
+                payload = {"sender": "あなた", "text": text}
+                self.ws_client.send(payload)
+        except Exception:
+            pass
 
     def _append_message(self, who: str, text: str):
         ts = QDateTime.currentDateTime().toString("HH:mm:ss")
@@ -126,6 +145,13 @@ class ChatWindow(QWidget):
             self.chat_view.addItem(item)
             self.chat_view.setItemWidget(item, widget)
             self.chat_view.scrollToBottom()
+            # サーバへ送信（ファイルパスを送る。実運用ではファイル転送/URL化が必要）
+            try:
+                if self.ws_client is not None:
+                    payload = {"sender": "あなた", "text": "", "attachment": str(dest)}
+                    self.ws_client.send(payload)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -135,5 +161,34 @@ class ChatWindow(QWidget):
             self.storage.close()
         except Exception:
             pass
+        try:
+            if self.ws_client is not None:
+                self.ws_client.stop()
+        except Exception:
+            pass
         super().closeEvent(event)
+
+    def _on_ws_message(self, data: dict):
+        """サーバから来たメッセージを UI に表示し、ローカルに保存する。"""
+        try:
+            sender = data.get("sender", "相手")
+            text = data.get("text", "")
+            ts = data.get("timestamp")
+            attachment = data.get("attachment")
+            # 永続化
+            try:
+                # storage.add_message is sync
+                self.storage.add_message(sender, text, timestamp=ts, attachment=attachment)
+            except Exception:
+                pass
+
+            is_sender = sender == "あなた"
+            widget = MessageBubble(sender, text=text, attachment=attachment, align_right=is_sender)
+            item = QListWidgetItem()
+            item.setSizeHint(widget.sizeHint())
+            self.chat_view.addItem(item)
+            self.chat_view.setItemWidget(item, widget)
+            self.chat_view.scrollToBottom()
+        except Exception:
+            pass
 
