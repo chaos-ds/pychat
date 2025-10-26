@@ -11,3 +11,5 @@ sudo chown -R pychat:pychat /opt/pychat
 sudo -u pychat bash -c 'python3 -m venv /opt/pychat/.venv && \
   /opt/pychat/.venv/bin/pip install --upgrade pip && \
   /opt/pychat/.venv/bin/pip install -r /opt/pychat/server/requirements.txt'
+
+
