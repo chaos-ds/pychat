@@ -30,25 +30,36 @@ class Storage:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender TEXT NOT NULL,
                 text TEXT NOT NULL,
-                timestamp TEXT NOT NULL
+                timestamp TEXT NOT NULL,
+                attachment TEXT
             )
             """
         )
         self.conn.commit()
+        # Ensure attachment column exists for older DBs
+        cur.execute("PRAGMA table_info(messages)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "attachment" not in cols:
+            try:
+                cur.execute("ALTER TABLE messages ADD COLUMN attachment TEXT")
+                self.conn.commit()
+            except Exception:
+                # Some SQLite versions may not allow ALTER; ignore if it fails
+                pass
 
-    def add_message(self, sender: str, text: str, timestamp: Optional[str] = None) -> int:
+    def add_message(self, sender: str, text: str, timestamp: Optional[str] = None, attachment: Optional[str] = None) -> int:
         ts = timestamp or datetime.utcnow().isoformat()
         cur = self.conn.cursor()
         cur.execute(
-            "INSERT INTO messages (sender, text, timestamp) VALUES (?, ?, ?)",
-            (sender, text, ts),
+            "INSERT INTO messages (sender, text, timestamp, attachment) VALUES (?, ?, ?, ?)",
+            (sender, text, ts, attachment),
         )
         self.conn.commit()
         return cur.lastrowid
 
     def get_messages(self, limit: Optional[int] = None) -> List[Dict]:
         cur = self.conn.cursor()
-        q = "SELECT id, sender, text, timestamp FROM messages ORDER BY id ASC"
+        q = "SELECT id, sender, text, timestamp, attachment FROM messages ORDER BY id ASC"
         if limit is not None:
             q += " LIMIT ?"
             cur.execute(q, (limit,))

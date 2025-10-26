@@ -7,11 +7,14 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QSizePolicy,
+    QFileDialog,
 )
 from PySide6.QtCore import QDateTime
 from pathlib import Path
+import shutil
 
 from .storage import Storage
+from .ui_enhancements import MessageBubble
 
 
 class ChatWindow(QWidget):
@@ -44,30 +47,36 @@ class ChatWindow(QWidget):
         input_layout = QHBoxLayout()
         self.input = QLineEdit()
         self.input.setPlaceholderText("メッセージを入力...")
+        # 添付ボタン
+        self.attach_btn = QPushButton("添付")
         self.send_btn = QPushButton("送信")
         input_layout.addWidget(self.input)
+        input_layout.addWidget(self.attach_btn)
         input_layout.addWidget(self.send_btn)
         main_layout.addLayout(input_layout)
 
         # シグナル
         self.send_btn.clicked.connect(self.send_message)
         self.input.returnPressed.connect(self.send_message)
+        self.attach_btn.clicked.connect(self.attach_file)
 
         # 起動時に履歴をロード
         try:
             for msg in self.storage.get_messages():
-                # DB の timestamp は ISO 文字列なので、簡易的にそのまま表示
                 who = msg.get("sender", "?")
                 text = msg.get("text", "")
                 ts = msg.get("timestamp")
-                # _append_message は現在時刻を表示するため、履歴用に直接 QListWidgetItem を追加
-                item_text = f"[{ts}] {who}: {text}"
-                from PySide6.QtWidgets import QListWidgetItem
-
-                self.chat_view.addItem(QListWidgetItem(item_text))
+                attachment = msg.get("attachment")
+                is_sender = who == "あなた"
+                # MessageBubble を使って履歴表示
+                widget = MessageBubble(who, text=text, attachment=attachment, align_right=is_sender)
+                item = QListWidgetItem()
+                item.setSizeHint(widget.sizeHint())
+                self.chat_view.addItem(item)
+                self.chat_view.setItemWidget(item, widget)
             self.chat_view.scrollToBottom()
         except Exception:
-            # 履歴ロードに失敗しても起動は続行
+            # 履歴ロード失敗は無視
             pass
 
     def send_message(self):
@@ -80,16 +89,15 @@ class ChatWindow(QWidget):
         except Exception:
             pass
 
-        self._append_message("あなた", text)
+        # UI にバブルとして追加
+        widget = MessageBubble("あなた", text=text, align_right=True)
+        item = QListWidgetItem()
+        item.setSizeHint(widget.sizeHint())
+        self.chat_view.addItem(item)
+        self.chat_view.setItemWidget(item, widget)
         self.input.clear()
 
-        # デモのために簡単なエコー応答を追加
-        reply = f"受信しました: {text}"
-        try:
-            self.storage.add_message("相手", reply)
-        except Exception:
-            pass
-        self._append_reply(reply)
+        # 自動エコーは不要のためここでは何もしない
 
     def _append_message(self, who: str, text: str):
         ts = QDateTime.currentDateTime().toString("HH:mm:ss")
@@ -97,6 +105,29 @@ class ChatWindow(QWidget):
         item = QListWidgetItem(item_text)
         self.chat_view.addItem(item)
         self.chat_view.scrollToBottom()
+
+    def attach_file(self):
+        # ファイルダイアログで画像を選び、attachments フォルダにコピーしてメッセージとして送信
+        filename, _ = QFileDialog.getOpenFileName(self, "ファイルを選択", str(Path.home()), "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
+        if not filename:
+            return
+        try:
+            attachments_dir = Path(__file__).resolve().parents[1] / "attachments"
+            attachments_dir.mkdir(parents=True, exist_ok=True)
+            dest = attachments_dir / (f"{int(QDateTime.currentSecsSinceEpoch())}_" + Path(filename).name)
+            shutil.copy(filename, str(dest))
+            # 永続化（テキストは空でも良い）
+            self.storage.add_message("あなた", "", attachment=str(dest))
+
+            # UI に追加
+            widget = MessageBubble("あなた", text="", attachment=str(dest), align_right=True)
+            item = QListWidgetItem()
+            item.setSizeHint(widget.sizeHint())
+            self.chat_view.addItem(item)
+            self.chat_view.setItemWidget(item, widget)
+            self.chat_view.scrollToBottom()
+        except Exception:
+            pass
 
     def closeEvent(self, event):
         # アプリ終了時に DB を閉じる
@@ -106,5 +137,3 @@ class ChatWindow(QWidget):
             pass
         super().closeEvent(event)
 
-    def _append_reply(self, text: str):
-        self._append_message("相手", text)
